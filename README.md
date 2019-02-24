@@ -1,2 +1,2 @@
 # cabernet
-Caliberated Bayesian Regression Network
+Caliberated Bayesian Ensemble Regression Network
