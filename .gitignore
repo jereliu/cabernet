@@ -1,4 +1,6 @@
 .idea/
+deprecated/
 plot/
 result/
 */__pycache__/
+*/*/__pycache__/
