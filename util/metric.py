@@ -453,3 +453,6 @@ def credible_interval_coverage(Y_obs, Y_sample, n_perc_eval=100):
     is_in_interval = is_leq_upper * is_geq_lower
 
     #
+    observed_coverage = np.mean(is_in_interval, axis=0)
+
+    return nom_coverage, observed_coverage

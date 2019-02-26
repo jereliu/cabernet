@@ -96,7 +96,7 @@ def normal_variational_family(shape, name=None,
                                    initializer=init_scale,
                                    trainable=trainable)
 
-        rv_shape = shape if shape else init_loc.shape
+        rv_shape = shape if shape is not None else init_loc.shape
 
         if len(rv_shape) == 0:
             q_rv = ed.Normal(loc=q_mean,
