@@ -12,7 +12,7 @@ from tensorflow_probability import edward2 as ed
 
 
 class GaussianProcess(model_template.Model):
-    def __init__(self, X, y, ls, kern_func=kernel_util.rbf):
+    def __init__(self, X, y, log_ls, kern_func=kernel_util.rbf):
         """Initializer.
 
         Args:
@@ -29,48 +29,60 @@ class GaussianProcess(model_template.Model):
         super().__init__(self.param_name, self.sample_name)
 
         # data handling
-        self.X = tf.convert_to_tensor(X, dtype=dtype_util.TF_DTYPE)
-        self.y = tf.convert_to_tensor(y, dtype=dtype_util.TF_DTYPE)
-        self.ls = ls
+        self.X = X
+        self.y = y
+        self.ls = np.exp(log_ls)
+
         self.kern_func = kern_func
 
         # check data dimension
-        Nx, Dx = self.X.shape
-        Ny, Dy = self.y.shape
+        # self.y = np.reshape(self.y, (self.y.size, 1))
 
-        if Dy != 1:
-            raise ValueError("Dimension of y must be (N, 1)."
-                             " Observed {}".format((Ny.value, Dy.value)))
+        Nx, Dx = self.X.shape
+        Ny = self.y.size
+
         if Nx != Ny:
             raise ValueError("Sample sizes in X ({}) and "
-                             "y ({}) not equal".format(Nx.value, Ny.value))
+                             "y ({}) not equal".format(Nx, Ny))
 
-    def definition(self, ridge_factor=1e-3, scope_name="gp"):
+    def definition(self, ridge_factor=1e-3, scope_name="gp",
+                   gp_only=False):
         """Defines Gaussian Process prior with kernel_func.
 
         Args:
             ridge_factor: (float32) ridge factor to stabilize Cholesky decomposition.
             scope_name: (str) name of the random variable
+            gp_only: (bool) Whether only return gp.
 
         Returns:
             (ed.RandomVariable) A random variable representing the Gaussian Process,
                 dimension (N,)
 
         """
+        self.X = tf.convert_to_tensor(self.X, dtype=dtype_util.TF_DTYPE)
+        self.ls = tf.convert_to_tensor(self.ls, dtype=dtype_util.TF_DTYPE)
+
         Nx, Dx = self.X.shape
 
-        with tf.variable_scope(scope_name):
-            gp_mean = tf.zeros(Nx.value, dtype=dtype_util.TF_DTYPE)
+        gp_mean = tf.zeros(Nx.value, dtype=dtype_util.TF_DTYPE)
 
-            # covariance
-            K_mat = self.kern_func(self.X, ls=self.ls,
-                                   ridge_factor=ridge_factor)
+        # covariance
+        K_mat = self.kern_func(self.X,
+                               ls=self.ls,
+                               ridge_factor=ridge_factor)
 
-            gp = ed.MultivariateNormalTriL(
-                loc=gp_mean,
-                scale_tril=tf.cholesky(K_mat),
-                name="gp")
+        gp = ed.MultivariateNormalTriL(
+            loc=gp_mean,
+            scale_tril=tf.cholesky(K_mat),
+            name="gp")
+
+        if gp_only:
             return gp
+
+        y = ed.MultivariateNormalDiag(loc=gp,
+                                      scale_identity_multiplier=.01,
+                                      name="y")
+        return y
 
     def variational_family(self, Z, Zm=None,
                            ridge_factor=1e-3,
@@ -178,7 +190,7 @@ class GaussianProcess(model_template.Model):
         f_new_centered = np.random.multivariate_normal(
             mean=[0] * N_new, cov=cond_cov, size=M).T
         f_new = f_new_centered + cond_means
-        f_new = f_new.astype(dtype_util.NP_DTYPE)
+        f_new = tf.convert_to_tensor(f_new, dtype=dtype_util.TF_DTYPE)
 
         # finally, produce outcome dictionary
         pred_sample_dict = dict()
