@@ -2,6 +2,8 @@
 import os
 import time
 
+import util.dtype as dtype_util
+
 import meta.estimator as estimator_template
 import inference.vi as vi
 
@@ -64,22 +66,18 @@ class Predictor(estimator_template.Estimator):
 
         self.sample_dict[sample_type] = param_samples
 
-    def run(self, sess, model_dir=None):
+    def run(self, sess):
         """Executes estimator graph in a given session.
 
         Args:
             sess: (tf.Session) A session that was previously used
                 to perform inference with self.estimator. It should
                 contain all the parameter estimates.
-            model_dir: (str) Location to save sample results.
 
         Returns:
-
+            (dict) Evaluated self.sample_dict.
         """
-        if not self.graph or not self.sample_dict:
-            raise ValueError("Estimator not properly initialized. "
-                             "Please run config()")
-        # TODO(jereliu): finish
+        return sess.run(self.sample_dict)
 
     def _config_posterior_sample_graph(self, n_sample):
         """Adds graph nodes for drawing predictive samples."""

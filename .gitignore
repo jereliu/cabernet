@@ -1,6 +1,7 @@
 .idea/
 deprecated/
 plot/
-result/
+*result/
 */__pycache__/
 */*/__pycache__/
+*temp/
