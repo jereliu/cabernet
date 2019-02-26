@@ -3,7 +3,7 @@ import collections
 
 from abc import ABC, abstractmethod
 
-import meta.model as meta_model
+import meta.model as model_template
 
 # set up EstimatorOps container with defaults
 EstimatorOps = collections.namedtuple("EstimatorOps",
@@ -20,6 +20,8 @@ class Estimator(ABC):
         self.graph = None
         self.param = None
         self.ops = None
+
+        self.__model = None
         self.model = model
 
     @abstractmethod
@@ -43,10 +45,10 @@ class Estimator(ABC):
     @model.setter
     def model(self, new_model):
         """Setter method to make model property immutable."""
-        if self.__model:
+        if self.model:
             raise ValueError("model already defined and cannot be changed.")
 
-        if not isinstance(new_model, meta_model.Model):
+        if not isinstance(new_model, model_template.Model):
             raise ValueError("The input model is not a valid Model class.")
 
         self.__model = new_model
