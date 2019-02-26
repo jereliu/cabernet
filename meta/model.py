@@ -25,10 +25,9 @@ class Model(ABC):
         self.sample_dict = dict(zip(sample_name,
                                     [SAMPLE_PARAM_DEFAULT, ] * len(sample_name)))
 
-    @staticmethod
     @abstractmethod
-    def definition():
-        """Sets up model definition and parameters."""
+    def definition(self):
+        """Adds model parameter nodes to graph."""
         ...
 
     @staticmethod
