@@ -1,6 +1,7 @@
 """Estimator for sampling model parameters using variational inference (VI)."""
 import os
 import time
+import shutil
 
 import meta.estimator as estimator_template
 
@@ -28,27 +29,21 @@ class VIEstimator(estimator_template.Estimator):
         vi_graph = tf.Graph()
 
         with vi_graph.as_default():
-            rv_dict = self.model.variational_family(**vi_kwargs)
+            vi_rv_dict = self.model.variational_family(**vi_kwargs)
 
             # build likelihood function
-            with ed.tape() as model_tape:
-                with ed.interception(model_util.make_value_setter(**rv_dict)):
-                    outcome_rv = self.model.definition()
-
-            log_likelihood = self.model(outcome_rv, self.model.y)
+            log_likelihood, outcome_rv, model_rv_dict = (
+                self._make_likelihood(vi_rv_dict))
 
             # build kl divergence
-            kl = 0.
-            for rv_name, vi_rv in rv_dict.items():
-                # compute analytical form
-                param_kl = vi_rv.distribution.kl_divergence(
-                    model_tape[rv_name].distribution)
-
-                kl += tf.reduce_sum(param_kl)
+            kl = self._make_kl_divergence(vi_rv_dict, model_rv_dict)
 
             # define loss op by combining likelihood and kl
             # i.e. ELBO = E_q(p(x|z)) + KL(q || p)
             elbo = tf.reduce_mean(log_likelihood - kl)
+            nll_val = tf.reduce_mean(-log_likelihood)
+            kl_val = tf.reduce_mean(kl)
+
             loss_op = -elbo
 
             # define training op
@@ -57,19 +52,23 @@ class VIEstimator(estimator_template.Estimator):
 
             # define summary op
             tf.summary.scalar("loss", loss_op)
-            tf.summary.scalar("neg_likelihood", -log_likelihood)
-            tf.summary.scalar("kl_divergence", kl)
+            tf.summary.scalar("neg_likelihood", nll_val)
+            tf.summary.scalar("kl_divergence", kl_val)
 
             summary_op = tf.summary.merge_all()
 
             # define init op
             init_op = tf.global_variables_initializer()
 
+            # define saving op
+            save_op = tf.train.Saver()
+
         self.graph = vi_graph
         self.param = self.model.vi_param
         self.ops = estimator_template.EstimatorOps(loss=loss_op,
                                                    train=train_op,
                                                    init=init_op,
+                                                   save=save_op,
                                                    pred=outcome_rv,
                                                    summary=summary_op)
 
@@ -96,6 +95,7 @@ class VIEstimator(estimator_template.Estimator):
 
         if not model_dir:
             model_dir = os.path.join(os.getcwd(), "ckpt_temp")
+            shutil.rmtree(model_dir, ignore_errors=True)
             os.makedirs(model_dir, exist_ok=True)
 
             print("'model_dir' empty."
@@ -140,11 +140,48 @@ class VIEstimator(estimator_template.Estimator):
 
         return sess
 
-    def __make_likelihood(self):
-        """Produces optimizable tensor for model likelihood."""
-        # TODO(jereliu): move likelihood definition to here
-        ...
+    def _make_likelihood(self, rv_dict):
+        """Produces optimizable tensor for model likelihood.
 
-    def __make_kl_divergence(self):
-        """Produces optimizable tensor for KL divergence."""
-        # TODO(jereliu): move kl definition to here
+        Args:
+            rv_dict: (dict of RandomVariable) Dictionary of random variables
+                representing variational family for each model parameter.
+
+        Returns:
+            log_likelihood: (tf.Tensor) A likelihood tensor with registered
+                gradient with respect to VI parameters.
+            outcome_rv: (ed.RandomVariable) A random variable representing
+                model's predictive distribution.
+            model_tape: (ContextManager) A ContextManager recording the
+                model variables in model graph.
+        """
+        with ed.tape() as model_tape:
+            with ed.interception(model_util.make_value_setter(**rv_dict)):
+                outcome_rv = self.model.definition()
+
+        log_likelihood = self.model.likelihood(outcome_rv, self.model.y)
+
+        return log_likelihood, outcome_rv, model_tape
+
+    def _make_kl_divergence(self, rv_dict, model_tape):
+        """Produces optimizable tensor for KL divergence.
+
+        Args:
+            rv_dict: (dict of RandomVariable) Dictionary of random variables
+                representing variational family for each model parameter.
+            model_tape: (ContextManager) A ContextManager recording the
+                model variables in model graph.
+
+        Returns:
+            (tf.Tensor) A tensor representing KL divergence between
+                model and variational parameters
+        """
+        kl = 0.
+        for rv_name, vi_rv in rv_dict.items():
+            # compute analytical form
+            param_kl = vi_rv.distribution.kl_divergence(
+                model_tape[rv_name].distribution)
+
+            kl += tf.reduce_sum(param_kl)
+
+        return kl
