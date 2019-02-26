@@ -36,22 +36,22 @@ class GaussianProcess(model_template.Model):
         self.kern_func = kern_func
 
         # check data dimension
-        # self.y = np.reshape(self.y, (self.y.size, 1))
-
-        Nx, Dx = self.X.shape
+        self.n_sample, self.n_dim = self.X.shape
         Ny = self.y.size
 
-        if Nx != Ny:
-            raise ValueError("Sample sizes in X ({}) and "
-                             "y ({}) not equal".format(Nx, Ny))
+        self.param_dim = {self.param_name[0]: (self.n_sample,)}
 
-    def definition(self, ridge_factor=1e-3, scope_name="gp",
+        if self.n_sample != Ny:
+            raise ValueError("Sample sizes in X ({}) and "
+                             "y ({}) not equal".format(self.n_sample, Ny))
+
+    def definition(self, ridge_factor=1e-3, name="gp",
                    gp_only=False):
         """Defines Gaussian Process prior with kernel_func.
 
         Args:
             ridge_factor: (float32) ridge factor to stabilize Cholesky decomposition.
-            scope_name: (str) name of the random variable
+            name: (str) name of the random variable
             gp_only: (bool) Whether only return gp.
 
         Returns:
@@ -74,7 +74,7 @@ class GaussianProcess(model_template.Model):
         gp = ed.MultivariateNormalTriL(
             loc=gp_mean,
             scale_tril=tf.cholesky(K_mat),
-            name="gp")
+            name=name)
 
         if gp_only:
             return gp
@@ -86,7 +86,7 @@ class GaussianProcess(model_template.Model):
 
     def variational_family(self, Z, Zm=None,
                            ridge_factor=1e-3,
-                           name="q_gp"):
+                           name="q_gp", return_vi_param=False):
         """Defines the decoupled GP variational family for GPR.
 
         Args:
@@ -95,6 +95,7 @@ class GaussianProcess(model_template.Model):
                 If None then same as Z
             ridge_factor: (float32) small ridge factor to stabilize Cholesky decomposition
             name: (str) name for the variational parameter/random variables.
+            return_param: (bool) If True then also return var parameters.
         """
         param_dict_all = dict()
 
@@ -108,6 +109,9 @@ class GaussianProcess(model_template.Model):
                 name=name)
 
         self.model_param, self.vi_param = model_util.make_param_dict(param_dict_all)
+
+        if return_vi_param:
+            return self.model_param, self.vi_param
 
         return self.model_param
 
