@@ -1,17 +1,8 @@
 """Estimator for computing predictive samples / CDFs."""
-import os
-import time
-
-import util.dtype as dtype_util
-
 import meta.estimator as estimator_template
 import inference.vi as vi
 
 import tensorflow as tf
-import tensorflow_probability as tfp
-from tensorflow_probability import edward2 as ed
-
-import util.model as model_util
 
 
 class Predictor(estimator_template.Estimator):
@@ -43,10 +34,13 @@ class Predictor(estimator_template.Estimator):
     def config(self, sample_type, **sample_kwargs):
         """Interface function for setting up estimator graph.
 
+        Adds a new sample dictionary to self.sample_dict
+
         Args:
             sample_type: (str) Type of predictive samples to draw, must be one
                 of the self.pred_types.
-            **sample_kwargs: Keyword arguments for assemble predictive graphs.
+            **sample_kwargs: Keyword arguments to pass to corresponding
+                sample functions in self.sample_funcs.
 
         Raises:
             (ValueError) If sample_type does not belong to
@@ -79,28 +73,22 @@ class Predictor(estimator_template.Estimator):
         """
         return sess.run(self.sample_dict)
 
-    def _config_posterior_sample_graph(self, n_sample):
+    def _config_posterior_sample_graph(self, **kwargs):
         """Adds graph nodes for drawing predictive samples."""
-        outcome_rv = self.estimator.ops.pred
-
-        post_sample_dict = self.model.posterior_sample(outcome_rv, n_sample)
-
-        return post_sample_dict
+        return self.model.posterior_sample(**kwargs)
 
     def _config_predictive_sample_graph(self, **kwargs):
         """Adds graph nodes for drawing predictive samples."""
         return self.model.predictive_sample(**kwargs)
 
-    def _config_predictive_cdf_graph(self):
+    def _config_predictive_cdf_graph(self, **kwargs):
         """Adds graph nodes for computing predictive CDFs.
 
         Raises:
             (ValueError): If model does not contain predictive_cdf method.
         """
-        # TODO(jereliu): finish this when Hierarchical Gaussian is implemented
-
         if not hasattr(self.model, "predictive_cdf"):
             raise ValueError("Predictive CDF not implemented "
                              "for current model ({}).".format(self.model.model_name))
 
-        raise NotImplementedError
+        return self.model.predictive_cdf(**kwargs)
