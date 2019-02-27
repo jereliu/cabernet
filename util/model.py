@@ -1,7 +1,9 @@
 """Utility and helper functions for building models."""
 
 import tensorflow as tf
+
 from tensorflow_probability import edward2 as ed
+from tensorflow_probability import distributions as tfd
 
 from tensorflow.python.ops.distributions.util import fill_triangular
 
@@ -9,6 +11,24 @@ import util.dtype as dtype_util
 import util.kernel as kernel_util
 
 import util.distribution as dist_util
+
+
+def sample_noise_using_sigma(log_sigma_sample, n_obs):
+    """Produces a sample of residual noises based on sigma values.
+
+    Args:
+        log_sigma_sample: (tf.Tensor) Samples of log sigmas, shape (n_sample, )
+        n_obs: (int) Number of observation to sample for each sigma value.
+
+    Returns:
+        (tf.Tensor) Samples of Gaussian noises following distribution
+            Normal(0, sigma). shape (n_sample, n_obs).
+    """
+    # tensor shape (n_obs, n_sample)
+    noise_sample = tfd.Normal(loc=0.,
+                              scale=tf.exp(log_sigma_sample)).sample(n_obs)
+
+    return tf.transpose(noise_sample, perm=[1, 0])
 
 
 def make_param_dict(param_val_dict):
