@@ -14,8 +14,8 @@ class Model(ABC):
     def __init__(self, param_name, sample_name):
         """Initializer."""
         # check model/parameter/sample names are given
-        if not self.model_name or not self.param_name or not self.sample_name:
-            raise ValueError("`model_name`/`param_name`/`sample_name` empty.")
+        if not self.model_name or not self.param_names or not self.sample_names:
+            raise ValueError("`model_name`/`param_names`/`sample_names` empty.")
 
         # initialize parameter containers.
         self.model_param = dict(zip(param_name,
