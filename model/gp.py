@@ -22,11 +22,11 @@ class GaussianProcess(model_template.Model):
                 Default to rbf.
         """
         self.model_name = "Gaussian Process"
-        self.param_name = ("gp",)
-        self.sample_name = ("gp",)
+        self.param_names = ("gp",)
+        self.sample_names = ("gp",)
 
         # initiate parameter dictionaries.
-        super().__init__(self.param_name, self.sample_name)
+        super().__init__(self.param_names, self.sample_names)
 
         # data handling
         self.X = X
@@ -36,14 +36,14 @@ class GaussianProcess(model_template.Model):
         self.kern_func = kern_func
 
         # check data dimension
-        self.n_sample, self.n_dim = self.X.shape
+        self.n_obs, self.n_dim = self.X.shape
         Ny = self.y.size
 
-        self.param_dim = {self.param_name[0]: (self.n_sample,)}
+        self.param_dims = {self.param_names[0]: (self.n_obs,)}
 
-        if self.n_sample != Ny:
+        if self.n_obs != Ny:
             raise ValueError("Sample sizes in X ({}) and "
-                             "y ({}) not equal".format(self.n_sample, Ny))
+                             "y ({}) not equal".format(self.n_obs, Ny))
 
     def definition(self, ridge_factor=1e-3, name="gp",
                    gp_only=False):
@@ -62,9 +62,7 @@ class GaussianProcess(model_template.Model):
         self.X = tf.convert_to_tensor(self.X, dtype=dtype_util.TF_DTYPE)
         self.ls = tf.convert_to_tensor(self.ls, dtype=dtype_util.TF_DTYPE)
 
-        Nx, Dx = self.X.shape
-
-        gp_mean = tf.zeros(Nx.value, dtype=dtype_util.TF_DTYPE)
+        gp_mean = tf.zeros(self.n_obs, dtype=dtype_util.TF_DTYPE)
 
         # covariance
         K_mat = self.kern_func(self.X,
@@ -99,9 +97,9 @@ class GaussianProcess(model_template.Model):
         """
         param_dict_all = dict()
 
-        assert len(self.param_name) == 1, "Found {} > 1 params".format(len(self.param_name))
+        assert len(self.param_names) == 1, "Found {} > 1 params".format(len(self.param_names))
 
-        for name in self.param_name:
+        for name in self.param_names:
             param_dict_all[name] = model_util.dgpr_variational_family(
                 X=self.X, Z=Z, Zm=Zm, ls=self.ls,
                 kernel_func=self.kern_func,
@@ -127,9 +125,9 @@ class GaussianProcess(model_template.Model):
         """
         post_sample_dict = dict()
 
-        assert len(self.sample_name) == 1, "Found {} > 1 params".format(len(self.sample_name))
+        assert len(self.sample_names) == 1, "Found {} > 1 params".format(len(self.sample_names))
 
-        for name in self.sample_name:
+        for name in self.sample_names:
             post_sample_dict[name] = outcome_rv.distribution.sample(n_sample)
 
         return post_sample_dict
@@ -139,7 +137,8 @@ class GaussianProcess(model_template.Model):
                           kernel_func_xn=None,
                           kernel_func_nn=None,
                           ridge_factor=1e-3,
-                          return_mean=False, return_vcov=False):
+                          return_mean=False, return_vcov=False,
+                          return_dict=True):
         """Sample posterior predictive distribution.
 
         Sample posterior conditional from f^* | f ~ MVN, where:
@@ -148,7 +147,7 @@ class GaussianProcess(model_template.Model):
             Var(f*|f) = K(X*, X*) - K(X*, X)K(X, X)^{-1}K(X, X*)
 
         Args:
-            X_new: (np.ndarray of float32) testing locations, N_new x D
+            X_new: (np.ndarray of float32) testing locations, (n_obs_new, n_sample)
             f_sample: (np.ndarray of float32) M samples of posterior GP sample,
                 N_obs x N_sample
             kernel_func_xn: (function or None) kernel function for distance between X and X_new,
@@ -158,13 +157,14 @@ class GaussianProcess(model_template.Model):
             ridge_factor: (float32) small ridge factor to stabilize Cholesky decomposition.
 
         Returns:
-             (np.ndarray of float32) N_new x M vectors of posterior predictive mean samples
+             (np.ndarray of float32) posterior predictive mean samples,
+                shape (n_sample, n_obs_new)
         """
         X_new = tf.convert_to_tensor(X_new, dtype=dtype_util.TF_DTYPE)
         f_sample = tf.convert_to_tensor(f_sample, dtype=dtype_util.TF_DTYPE)
 
         N_new, _ = X_new.shape.as_list()
-        N, M = f_sample.shape.as_list()
+        M, N = f_sample.shape.as_list()
 
         if kernel_func_xn is None:
             kernel_func_xn = self.kern_func
@@ -178,7 +178,9 @@ class GaussianProcess(model_template.Model):
         K_inv = tf.matrix_inverse(K)
 
         # compute conditional mean and variance.
-        mu_sample = tf.matmul(Kx, tf.matmul(K_inv, f_sample), transpose_a=True)
+        mu_sample = tf.matmul(Kx,
+                              tf.matmul(K_inv, f_sample, transpose_b=True),
+                              transpose_a=True)
         Sigma = Kxx - tf.matmul(Kx, tf.matmul(K_inv, Kx), transpose_a=True)
 
         # sample
@@ -194,14 +196,20 @@ class GaussianProcess(model_template.Model):
         f_new_centered = np.random.multivariate_normal(
             mean=[0] * N_new, cov=cond_cov, size=M).T
         f_new = f_new_centered + cond_means
+
+        # convert to tensor and organize shape to (n_sample, n_obs_new)
         f_new = tf.convert_to_tensor(f_new, dtype=dtype_util.TF_DTYPE)
+        f_new = tf.transpose(f_new, perm=[1, 0])
 
         # finally, produce outcome dictionary
+        if not return_dict:
+            return f_new
+
         pred_sample_dict = dict()
 
-        assert len(self.sample_name) == 1, "Found {} > 1 params".format(len(self.sample_name))
+        assert len(self.sample_names) == 1, "Found {} > 1 params".format(len(self.sample_names))
 
-        for name in self.sample_name:
+        for name in self.sample_names:
             pred_sample_dict[name] = f_new
 
         return pred_sample_dict
