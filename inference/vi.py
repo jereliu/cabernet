@@ -33,10 +33,10 @@ class VIEstimator(estimator_template.Estimator):
 
             # build likelihood function
             log_likelihood, outcome_rv, model_rv_dict = (
-                self._make_likelihood(vi_rv_dict))
+                _make_likelihood(vi_rv_dict, self.model))
 
             # build kl divergence
-            kl = self._make_kl_divergence(vi_rv_dict, model_rv_dict)
+            kl = _make_kl_divergence(vi_rv_dict, model_rv_dict)
 
             # define loss op by combining likelihood and kl
             # i.e. ELBO = E_q(p(x|z)) + KL(q || p)
@@ -98,8 +98,10 @@ class VIEstimator(estimator_template.Estimator):
             shutil.rmtree(model_dir, ignore_errors=True)
             os.makedirs(model_dir, exist_ok=True)
 
-            print("'model_dir' empty."
-                  " Temporary address created: {}".format(model_dir))
+            print("================================\n"
+                  "'model_dir' empty."
+                  " Temporary address created: {}\n"
+                  "================================\n".format(model_dir))
 
         if not sess:
             sess = tf.Session(graph=self.graph)
@@ -113,6 +115,12 @@ class VIEstimator(estimator_template.Estimator):
         # execute training
         start_time = time.time()
         step = 0
+        if verbose:
+            print("================================\n"
+                  "Training initiated. To monitor progress, use:\n"
+                  "`tensorboard --logdir={}`\n"
+                  "================================\n".format(model_dir))
+
         try:
             for step in range(max_steps):
                 _, elbo_value = sess.run([self.ops.train,
@@ -134,54 +142,58 @@ class VIEstimator(estimator_template.Estimator):
                         print("Step: {:>3d} Loss: {:.3f} ({:.3f} min)".format(
                             step, elbo_value, duration / 60.))
         except KeyboardInterrupt:
-            print("================================\n"
+            print("\n================================\n"
                   "Training terminated at Step {}\n"
                   "================================".format(step))
 
         return sess
 
-    def _make_likelihood(self, rv_dict):
-        """Produces optimizable tensor for model likelihood.
 
-        Args:
-            rv_dict: (dict of RandomVariable) Dictionary of random variables
-                representing variational family for each model parameter.
+def _make_likelihood(rv_dict, model):
+    """Produces optimizable tensor for model likelihood.
 
-        Returns:
-            log_likelihood: (tf.Tensor) A likelihood tensor with registered
-                gradient with respect to VI parameters.
-            outcome_rv: (ed.RandomVariable) A random variable representing
-                model's predictive distribution.
-            model_tape: (ContextManager) A ContextManager recording the
-                model variables in model graph.
-        """
-        with ed.tape() as model_tape:
-            with ed.interception(model_util.make_value_setter(**rv_dict)):
-                outcome_rv = self.model.definition()
+    Args:
+        rv_dict: (dict of RandomVariable) Dictionary of random variables
+            representing variational family for each model parameter.
+        model: (Model) A model that contains definition, likelihood and
+            training labels.
 
-        log_likelihood = self.model.likelihood(outcome_rv, self.model.y)
+    Returns:
+        log_likelihood: (tf.Tensor) A likelihood tensor with registered
+            gradient with respect to VI parameters.
+        outcome_rv: (ed.RandomVariable) A random variable representing
+            model's predictive distribution.
+        model_tape: (ContextManager) A ContextManager recording the
+            model variables in model graph.
+    """
+    with ed.tape() as model_tape:
+        with ed.interception(model_util.make_value_setter(**rv_dict)):
+            outcome_rv = model.definition()
 
-        return log_likelihood, outcome_rv, model_tape
+    log_likelihood = model.likelihood(outcome_rv, model.y)
 
-    def _make_kl_divergence(self, rv_dict, model_tape):
-        """Produces optimizable tensor for KL divergence.
+    return log_likelihood, outcome_rv, model_tape
 
-        Args:
-            rv_dict: (dict of RandomVariable) Dictionary of random variables
-                representing variational family for each model parameter.
-            model_tape: (ContextManager) A ContextManager recording the
-                model variables in model graph.
 
-        Returns:
-            (tf.Tensor) A tensor representing KL divergence between
-                model and variational parameters
-        """
-        kl = 0.
-        for rv_name, vi_rv in rv_dict.items():
-            # compute analytical form
-            param_kl = vi_rv.distribution.kl_divergence(
-                model_tape[rv_name].distribution)
+def _make_kl_divergence(rv_dict, model_tape):
+    """Produces optimizable tensor for KL divergence.
 
-            kl += tf.reduce_sum(param_kl)
+    Args:
+        rv_dict: (dict of RandomVariable) Dictionary of random variables
+            representing variational family for each model parameter.
+        model_tape: (ContextManager) A ContextManager recording the
+            model variables in model graph.
 
-        return kl
+    Returns:
+        (tf.Tensor) A tensor representing KL divergence between
+            model and variational parameters
+    """
+    kl = 0.
+    for rv_name, vi_rv in rv_dict.items():
+        # compute analytical form
+        param_kl = vi_rv.distribution.kl_divergence(
+            model_tape[rv_name].distribution)
+
+        kl += tf.reduce_sum(param_kl)
+
+    return kl
