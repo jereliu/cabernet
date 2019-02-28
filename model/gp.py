@@ -17,7 +17,7 @@ class GaussianProcess(model_template.Model):
 
         Args:
             X: (np.ndarray of float32) input training features, shape (N, D).
-            ls: (float32) length scale parameter.
+            log_ls: (float32) length scale parameter.
             kern_func: (callable) kernel function for the gaussian process.
                 Default to rbf.
         """
