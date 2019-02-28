@@ -34,7 +34,7 @@ class HierarchicalGP(model_template.Model):
                 dimension (N, ).
             y: (np.ndarray) Input labels of dimension (N, ).
             add_resid: (bool) Whether to add residual process to model.
-            log_ls_resid: (float32) length-scale parameter for residual GP.
+            resid_log_ls: (float32) length-scale parameter for residual GP.
                 If None then will estimate with normal prior.
 
         Raises:
@@ -282,16 +282,18 @@ class HierarchicalGP(model_template.Model):
                 samples, with keys containing those in self.sample_names.
 
         Returns:
-            (dict of tf.Tensor) A dictionary of predictive CDF values
-                for n_obs locations in sample_dict,
-                evaluated at y_eval, shape (n_eval, n_obs)
+            (dict of tf.Tensor) A dictionary of two items:
+                `y_eval`:   y locations where CDF are evaluated.
+                `cdf`:      predictive CDF values for n_obs locations
+                            in sample_dict, evaluated at y_eval,
+                            shape (n_eval, n_obs).
         """
         # check sample_dict
         required_keys = ("y", "noise", "log_sigma")
         for key in required_keys:
             try:
                 sample_dict[key]
-            except:
+            except KeyError:
                 raise ValueError(
                     "`sample_dict` must contain key {}".format(key))
 
@@ -318,6 +320,8 @@ class HierarchicalGP(model_template.Model):
 
         # return dictionary
         pred_cdf_dict = dict()
+
+        pred_cdf_dict["y_eval"] = y_eval
         pred_cdf_dict["cdf"] = cdf_vals
 
         return pred_cdf_dict
