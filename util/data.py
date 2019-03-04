@@ -15,7 +15,8 @@ def sin_cos_curve_weibull_vary_skew_1d(x, sin_rate=3., cos_rate=3.):
     return sin_rate * np.sin(x) + cos_rate * np.abs(np.cos(x / 2.)) * eps
 
 
-def sin_cos_curve_skew_noise_1d(x, sin_rate=3., cos_rate=2., noise_type="adaptive_weibull"):
+def sin_cos_curve_skew_noise_1d(x, sin_rate=2., cos_rate=2.,
+                                noise_type="adaptive_weibull"):
     """sine curve with additive noise with (varying) skewness."""
     if noise_type == "skewnorm":
         a_val = scaled_segments(x, min_val=0, max_val=10,
@@ -24,14 +25,14 @@ def sin_cos_curve_skew_noise_1d(x, sin_rate=3., cos_rate=2., noise_type="adaptiv
     elif noise_type == "weibull":
         eps = np.random.weibull(a=0.5, size=x.shape)
     elif noise_type == "adaptive_weibull":
-        a_val = scaled_segments(x, min_val=1.5, max_val=3.,
+        a_val = scaled_segments(x, min_val=1.5, max_val=2.5,
                                 cutoff=[-4, -1, 1, 4])
         eps = np.random.weibull(a=a_val, size=x.shape)
     else:
         raise ValueError("noise_type '{}' not supported.".format(noise_type))
 
     sd_rate = cos_rate * (np.abs(np.cos(x / 2.)) / 2. + .5)
-    sd_rate_adj = scaled_segments(x, min_val=1., max_val=5.,
+    sd_rate_adj = scaled_segments(x, min_val=1., max_val=2.,
                                   cutoff=[-np.pi, -.5, .5, np.pi])
     sd_rate = sd_rate * sd_rate_adj
     return sin_rate * np.sin(x) + sd_rate * eps
