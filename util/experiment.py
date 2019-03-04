@@ -76,8 +76,8 @@ def generate_data_1d(N_train=20, N_test=20, N_calib=500, N_valid=500,
 
     # generate id for calibration data
     np.random.seed(seed_calib)
-    calib_sample_id = np.argmin(np.abs(X_valid - X_calib[None, :]),
-                                axis=0)
+    calib_sample_id = np.linspace(0, N_valid - 1, num=N_calib).astype(np.int)
+    # np.argmin(np.abs(X_valid - X_calib[None, :]), axis=0)
 
     # standardize data
     std_centr_X = np.mean(X_test)
