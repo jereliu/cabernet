@@ -13,6 +13,18 @@ import util.kernel as kernel_util
 import util.distribution as dist_util
 
 
+def relu1(features):
+    """Computes Rectified Linear 1: `min(max(features, 0), 1)`.
+
+    Args:
+        features: (tf.Tensor) Input values, (n_obs, )
+
+    Returns:
+        (tf.Tensor) Output values, (n_obs, )
+    """
+    return tf.math.minimum(tf.math.maximum(features, 0), 1)
+
+
 def sample_noise_using_sigma(log_sigma_sample, n_obs):
     """Produces a sample of residual noises based on sigma values.
 
@@ -199,3 +211,32 @@ def dgpr_variational_family(X, Z, Zm=None, ls=1.,
                                                         cond_norm_ss=cond_norm_ss,
                                                         name=name)
     return q_f, qf_mean, qf_cov
+
+
+def mfvi_variational_family(X, name="", **kwargs):
+    """Defines the mean-field variational family for Gaussian Process.
+
+    Args:
+        X: (np.ndarray of float32) input training features, with dimension (N, D).
+        name: (str) name for variational parameters.
+        kwargs: Dict of other keyword variables.
+            For compatibility purpose with other variational family.
+
+    Returns:
+        q_f, q_sig: (ed.RandomVariable) variational family.
+        q_f_mean, q_f_sdev: (tf.Variable) variational parameters for q_f
+    """
+    X = tf.convert_to_tensor(X, dtype=tf.float32)
+
+    N, D = X.shape.as_list()
+
+    # define variational parameters
+    qf_mean = tf.get_variable(shape=[N], name='{}_mean'.format(name))
+    qf_sdev = tf.exp(tf.get_variable(shape=[N], name='{}_sdev'.format(name)))
+
+    # define variational family
+    q_f = ed.MultivariateNormalDiag(loc=qf_mean,
+                                    scale_diag=qf_sdev,
+                                    name=name)
+
+    return q_f, qf_mean, qf_sdev
