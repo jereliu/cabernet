@@ -28,7 +28,9 @@ class Predictor(estimator_template.Estimator):
         # register sample functions and containers
         self.sample_funcs = {"post_sample": self._config_posterior_sample_graph,
                              "pred_sample": self._config_predictive_sample_graph,
-                             "pred_cdf": self._config_predictive_cdf_graph}
+                             "pred_cdf": self._config_predictive_cdf_graph,
+                             "pred_quant": self._config_predictive_quant_graph,}
+
         self.sample_dict = dict()
 
     def config(self, sample_type, **sample_kwargs):
@@ -92,3 +94,15 @@ class Predictor(estimator_template.Estimator):
                              "for current model ({}).".format(self.model.model_name))
 
         return self.model.predictive_cdf(**kwargs)
+
+    def _config_predictive_quant_graph(self, **kwargs):
+        """Adds graph nodes for computing predictive CDFs.
+
+        Raises:
+            (ValueError): If model does not contain predictive_cdf method.
+        """
+        if not hasattr(self.model, "predictive_quantile"):
+            raise ValueError("Predictive Quantile not implemented "
+                             "for current model ({}).".format(self.model.model_name))
+
+        return self.model.predictive_quantile(**kwargs)
