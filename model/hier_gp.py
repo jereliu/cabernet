@@ -58,6 +58,7 @@ class HierarchicalGP(model_template.Model):
         self.y = y
         self.base_pred = base_pred
         self.base_pred_array = _make_base_pred_array(self.base_pred)
+        self.outcome_obs = self.y
 
         self.add_resid = add_resid
         self.resid_log_ls = resid_log_ls
@@ -213,7 +214,8 @@ class HierarchicalGP(model_template.Model):
 
     def predictive_sample(self,
                           X_new, base_pred_new,
-                          post_sample_dict, **resid_kwargs):
+                          post_sample_dict,
+                          **resid_kwargs):
         """Samples new observations.
 
         Args:
@@ -229,6 +231,7 @@ class HierarchicalGP(model_template.Model):
             (dict of tf.Tensor) Dictionary of predictive samples,
                 with keys containing those in self.sample_names.
         """
+
         # first make base_pred_array
         base_pred_array_new = _make_base_pred_array(base_pred_new)
         n_obs_new, n_model_new = base_pred_array_new.shape
@@ -283,11 +286,72 @@ class HierarchicalGP(model_template.Model):
 
         Returns:
             (dict of tf.Tensor) A dictionary of two items:
-                `y_eval`:   y locations where CDF are evaluated.
+                `perc_eval`:   y locations where CDF are evaluated.
                 `cdf`:      predictive CDF values for n_obs locations
-                            in sample_dict, evaluated at y_eval,
+                            in sample_dict, evaluated at perc_eval,
                             shape (n_eval, n_obs).
         """
+
+        # type handling
+        y_eval = tf.convert_to_tensor(y_eval,
+                                      dtype=dtype_util.TF_DTYPE)
+
+        # eval over cdf functions, shape (n_eval, n_sample, n_obs)
+        pred_dist = self._make_sample_distribution(sample_dict)
+        cdf_func = pred_dist.cdf
+        cdf_val_samples = tf.map_fn(cdf_func, y_eval)
+
+        # average over posterior sample, shape  (n_eval, n_obs)
+        cdf_vals = tf.reduce_mean(cdf_val_samples, axis=1)
+
+        # return dictionary
+        pred_cdf_dict = dict()
+
+        pred_cdf_dict["perc_eval"] = y_eval
+        pred_cdf_dict["cdf"] = cdf_vals
+
+        return pred_cdf_dict
+
+    def predictive_quantile(self, perc_eval, sample_dict):
+        """Produces predictive quantiles.
+
+        Args:
+            perc_eval (tf.Tensor) percentage values to compute quantiles for,
+                shape (n_eval, )
+            sample_dict: (dict of tf.Tensor) Dictionary of posterior/predictive
+                samples, with keys containing those in self.sample_names.
+
+        Returns:
+            (dict of tf.Tensor) A dictionary of two items:
+                `perc_eval`:   y locations where CDF are evaluated.
+                `cdf`:      predictive CDF values for n_obs locations
+                            in sample_dict, evaluated at perc_eval,
+                            shape (n_eval, n_obs).
+        """
+
+        # type handling
+        perc_eval = tf.convert_to_tensor(perc_eval,
+                                         dtype=dtype_util.TF_DTYPE)
+
+        # eval over cdf functions, shape (n_eval, n_sample, n_obs)
+        pred_dist = self._make_sample_distribution(sample_dict)
+        quant_func = pred_dist.quantile
+        quant_val_samples = tf.map_fn(quant_func, perc_eval)
+
+        # average over posterior sample, shape  (n_eval, n_obs)
+        quant_vals = tf.reduce_mean(quant_val_samples, axis=1)
+
+        # return dictionary
+        pred_quant_dict = dict()
+
+        pred_quant_dict["perc_eval"] = perc_eval
+        pred_quant_dict["quantile"] = quant_vals
+
+        return pred_quant_dict
+
+    @staticmethod
+    def _make_sample_distribution(sample_dict):
+        """Produce a tf.Distribution object from sample dictionary."""
         # check sample_dict
         required_keys = ("y", "noise", "log_sigma")
         for key in required_keys:
@@ -296,10 +360,6 @@ class HierarchicalGP(model_template.Model):
             except KeyError:
                 raise ValueError(
                     "`sample_dict` must contain key {}".format(key))
-
-        # type handling
-        y_eval = tf.convert_to_tensor(y_eval,
-                                      dtype=dtype_util.TF_DTYPE)
 
         # compute posterior sample, shape (n_sample, n_obs)
         pred_sample_mean = sample_dict["y"] - sample_dict["noise"]
@@ -311,20 +371,8 @@ class HierarchicalGP(model_template.Model):
                                     multiples=[1, n_obs])
 
         # eval over cdf functions, shape (n_eval, n_sample, n_obs)
-        cdf_func = tfd.Normal(loc=pred_sample_mean,
-                              scale=pred_sample_scale).cdf
-        cdf_val_samples = tf.map_fn(cdf_func, y_eval)
-
-        # average over posterior sample, shape  (n_eval, n_obs)
-        cdf_vals = tf.reduce_mean(cdf_val_samples, axis=1)
-
-        # return dictionary
-        pred_cdf_dict = dict()
-
-        pred_cdf_dict["y_eval"] = y_eval
-        pred_cdf_dict["cdf"] = cdf_vals
-
-        return pred_cdf_dict
+        return tfd.Normal(loc=pred_sample_mean,
+                          scale=pred_sample_scale)
 
 
 def _make_base_pred_array(base_pred):
