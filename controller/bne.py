@@ -27,6 +27,8 @@ BNESummary = collections.namedtuple("BNESummary",
 BNESummary.__new__.__defaults__ = (None,) * len(BNESummary._fields)
 
 
+# TODO(jereliu): model diagnosis for skewness and kurtosis.
+
 class BNE(object):
     def __init__(self,
                  X, y, base_pred,
@@ -93,9 +95,10 @@ class BNE(object):
         self.system_model_quantile_pred = None
         self.random_model_quantile_pred = None
 
-    def run_model(self):
+    def run_model(self, system_model_kwargs, random_model_kwargs):
         """Estimates and generates predictive samples/quantiles for full model."""
-        ...
+        self.run_system_model(**system_model_kwargs)
+        self.run_random_model(**random_model_kwargs)
 
     def run_system_model(self,
                          log_ls_system=None, restart_model=True,
