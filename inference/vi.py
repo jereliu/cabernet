@@ -105,12 +105,11 @@ class VIEstimator(estimator_template.Estimator):
 
         if not sess:
             sess = tf.Session(graph=self.graph)
+            # setup initialization
+            sess.run(self.ops.init)
 
         # setup summary
         summary_writer = tf.summary.FileWriter(model_dir, self.graph)
-
-        # setup initialization
-        sess.run(self.ops.init)
 
         # execute training
         start_time = time.time()
@@ -141,7 +140,7 @@ class VIEstimator(estimator_template.Estimator):
                         duration = time.time() - start_time
                         print("Step: {:>3d} Loss: {:.3f} ({:.3f} min)".format(
                             step, elbo_value, duration / 60.))
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, tf.errors.InvalidArgumentError):
             print("\n================================\n"
                   "Training terminated at Step {}\n"
                   "================================".format(step))
@@ -170,7 +169,7 @@ def _make_likelihood(rv_dict, model):
         with ed.interception(model_util.make_value_setter(**rv_dict)):
             outcome_rv = model.definition()
 
-    log_likelihood = model.likelihood(outcome_rv, model.y)
+    log_likelihood = model.likelihood(outcome_rv, model.outcome_obs)
 
     return log_likelihood, outcome_rv, model_tape
 
