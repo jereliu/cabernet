@@ -1,4 +1,5 @@
 """Utility and helper functions for building models."""
+import scipy.spatial as spatial
 
 import tensorflow as tf
 
@@ -240,3 +241,12 @@ def mfvi_variational_family(X, name="", **kwargs):
                                     name=name)
 
     return q_f, qf_mean, qf_sdev
+
+
+def make_distance_mask(arr_1, arr_2, threshold):
+    """Computes a thresholding mask based on L2 distance between two arrays"""
+    dist_matrix = spatial.distance_matrix(arr_1, arr_2)
+
+    threshold_mask = dist_matrix > threshold
+
+    return threshold_mask.astype(dtype_util.NP_DTYPE)

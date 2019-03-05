@@ -31,7 +31,8 @@ class BNE(object):
     def __init__(self,
                  X, y, base_pred,
                  X_new, base_pred_new,
-                 X_calib=None, y_calib=None, base_pred_calib=None,
+                 X_calib=None, y_calib=None,
+                 X_calib_induce=None, base_pred_calib_induce=None,
                  log_ls_system=DEFAULT_GP_LOG_LS_RESID,
                  log_ls_random=DEFAULT_CDF_LOG_LS_RESID,
                  calib_percentiles_train=DEFAULT_CALIB_PERCENTILES_TRAIN,
@@ -49,8 +50,9 @@ class BNE(object):
 
         self.X_calib = self.X_train if X_calib is None else X_calib
         self.y_calib = self.y_train if y_calib is None else y_calib
-        self.base_pred_calib = (self.base_pred_train if base_pred_calib is None
-                                else base_pred_calib)
+        self.X_calib_induce = self.X_calib if X_calib_induce is None else X_calib_induce
+        self.base_pred_calib_induce = (self.base_pred_train if base_pred_calib_induce is None
+                                       else base_pred_calib_induce)
 
         self.X_test = X_new
         self.base_pred_test = base_pred_new
@@ -117,11 +119,12 @@ class BNE(object):
         # PREDICTION
         self.system_predictor = predictor.Predictor(estimator=self.system_estimator)
 
-        # sample posterior, train and pred location
+        # sample posterior, train, calibration and pred location
         self.system_model_sample_train = self._sample_system_model(n_sample)
+
         self.system_model_sample_calib = (
-            self._pred_sample_system_model(X_new=self.X_calib,
-                                           base_pred_new=self.base_pred_calib))
+            self._pred_sample_system_model(X_new=self.X_calib_induce,
+                                           base_pred_new=self.base_pred_calib_induce))
         self.system_model_sample_pred = (
             self._pred_sample_system_model(X_new=self.X_test,
                                            base_pred_new=self.base_pred_test))
@@ -148,7 +151,8 @@ class BNE(object):
         if not self.random_model or restart_model:
             self.random_model = (
                 model.MonoGP(X=self.X_calib, y=self.y_calib,
-                             quant_dict=self.system_model_quantile_calib,
+                             X_induce=self.X_calib_induce,
+                             cdf_sample_induce=self.system_model_quantile_calib,
                              log_ls=self.log_ls_random)
             )
 
@@ -306,7 +310,7 @@ class BNE(object):
         """Computes summary statistics from the estimated CDFs."""
         for summary_name in self.summary_names:
             self.random_summarizer.config(summary_name,
-                                          percentiles=self.pred_percentiles)
+                                          percentiles=self.pred_percentiles / 100.)
 
         return self.random_summarizer.run()
 

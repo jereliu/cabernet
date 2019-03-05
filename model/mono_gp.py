@@ -17,10 +17,13 @@ from tensorflow_probability import edward2 as ed
 
 _CDF_PENALTY_MEAN_SHIFT = np.array(-5e-3).astype(dtype_util.NP_DTYPE)
 _CDF_PENALTY_SCALE = np.array(1e-3).astype(dtype_util.NP_DTYPE)
+_DEFAULT_CDF_LABEL_BANDWIDTH = .1
 
 _WEIGHT_PRIOR_SDEV = np.array(1.).astype(dtype_util.NP_DTYPE)
 _LOG_NOISE_PRIOR_MEAN = np.array(-1.).astype(dtype_util.NP_DTYPE)
 _LOG_NOISE_PRIOR_SDEV = np.array(1.).astype(dtype_util.NP_DTYPE)
+
+NULL_CDF_VAL = np.nan
 
 
 class MonoGP(model_template.Model):
@@ -34,15 +37,17 @@ class MonoGP(model_template.Model):
         F_emp = F + noise
     """
 
-    def __init__(self, X, quant_dict, y,
+    def __init__(self, X, y,
+                 X_induce, cdf_sample_induce,
                  log_ls,
                  kern_func=kernel_util.rbf,
                  activation=model_util.relu1):
         """Initializer.
 
         Args:
-            X: (np.ndarray of float32) Training label, shape (n_obs, n_dim),
-            quant_dict: (dict of np.ndarray) A dictionary of two items:
+            X: (np.ndarray of float32) Training features, shape (n_obs, n_dim),
+            X_induce: (np.ndarray of float32) Inducing points for training features, shape (n_obs_induce, n_dim),
+            cdf_sample_induce: (dict of np.ndarray) A dictionary of two items:
                 `perc_eval`:    y locations where CDF are evaluated,
                                 shape (n_eval, ).
                 `quantile`:     predictive CDF values for n_obs locations
@@ -64,9 +69,10 @@ class MonoGP(model_template.Model):
 
         # data handling
         self.X = X
+        self.X_induce = X_induce
         self.y = y
-        self.perc_eval = quant_dict["perc_eval"]
-        self.quant_val = quant_dict["quantile"]
+        self.perc_eval = cdf_sample_induce["perc_eval"]
+        self.quant_val = cdf_sample_induce["quantile"]
 
         self.ls = tf.exp(log_ls)
         self.kern_func = kern_func
@@ -74,9 +80,10 @@ class MonoGP(model_template.Model):
 
         # record statistics
         self.n_obs, self.n_dim = self.X.shape
+        self.n_obs_induce, n_dim_induce = self.X_induce.shape
         self.n_eval = len(self.perc_eval)
 
-        self.n_cdf_obs = self.n_eval * self.n_obs
+        self.n_cdf_obs = self.n_eval * self.n_obs_induce
         self.param_dims = {"gp": (self.n_cdf_obs,),
                            "log_sigma": ()}
 
@@ -86,10 +93,15 @@ class MonoGP(model_template.Model):
             raise ValueError("Sample sizes in X ({}) and "
                              "y ({}) not equal".format(self.n_obs, Ny))
 
+        if self.n_dim != n_dim_induce:
+            raise ValueError("Dimension in X ({}) and "
+                             "X_induce ({}) not equal".format(self.n_dim, n_dim_induce))
+
         # make model and empirical cdfs, shape (n_eval*n_obs, ...)
-        (self.model_cdf,
-         self.cdf_feature) = self._make_cdf_features(self.perc_eval, self.X)
-        self.empir_cdf = self._make_cdf_labels(self.quant_val, self.y)
+        self.model_cdf, self.cdf_feature = (
+            self._make_cdf_features(self.perc_eval, self.X_induce))
+        
+        self.empir_cdf = self._make_cdf_labels(bandwidth=_DEFAULT_CDF_LABEL_BANDWIDTH)
 
         # initiate a zero-mean GP.
         self.gp_model = model.GaussianProcess(X=self.cdf_feature,
@@ -242,7 +254,7 @@ class MonoGP(model_template.Model):
 
         post_sample_dict["cdf"] = cdf_mean + post_sample_dict["noise"]
         post_sample_dict["cdf_orig"] = tf.reshape(self.model_cdf,
-                                                  shape=(self.n_eval, self.n_obs))
+                                                  shape=(self.n_eval, self.n_obs_induce))
 
         return post_sample_dict
 
@@ -352,14 +364,12 @@ class MonoGP(model_template.Model):
         return pred_sample_dict
 
     @staticmethod
-    def _make_cdf_features(perc_array, X, flatten=True):
+    def _make_cdf_features(cdf_val, X, flatten=True):
         """Produces CDF features [F(y|X), X].
 
         Outputs an array [F(y|x), x] of shape (n_eval * n_obs, 1 + n_dim).
 
         Args:
-            perc_array: (np.ndarray) CDF values of shape (n_eval, ).
-            X: (np.ndarray) Features of shape (n_obs, n_dim).
             flatten: (bool) Whether to flatten output.
 
         Returns:
@@ -367,65 +377,117 @@ class MonoGP(model_template.Model):
             feature_all (np.ndarray) CDF and original input features of shape (n_eval * n_obs, 1 + n_dim).
         """
 
-        n_eval, = perc_array.shape
-        n_obs, n_dim = X.shape
+        return _join_cdf_and_feature(cdf_array=cdf_val,
+                                     feature_array=X,
+                                     flatten=flatten)
 
-        # repeat
-        cdf_feature = np.tile(np.reshape(perc_array, [perc_array.size, 1, 1]),
-                              (1, n_obs, 1))  # shape (n_eval, n_obs, 1)
-        X_feature = np.tile(np.expand_dims(X, 0),
-                            (n_eval, 1, 1))  # shape (n_eval, n_obs, n_dim)
-
-        # assemble features to wide format, shape (n_eval, n_obs, 1 + n_dim)
-        feature_all = np.concatenate([cdf_feature, X_feature], axis=-1)
-
-        # convert features to long format, shape (n_eval * n_obs, 1 + n_dim)
-        if flatten:
-            feature_all = feature_all.reshape(n_eval * n_obs, 1 + n_dim)
-
-        feature_cdf = feature_all[..., 0]
-
-        return feature_cdf, feature_all
-
-    @staticmethod
-    def _make_cdf_labels(y_eval, y, flatten=True):
+    def _make_cdf_labels(self, flatten=True, bandwidth=0.1):
         """Makes empirical cdf I(y < perc_eval).
 
         Args:
-            y_eval: (np.ndarray of float32) y locations where CDF
-                are evaluated, shape (n_eval, n_obs).
-            y: (np.ndarray of float32) Training labels, shape (n_obs, ).
-
+            flatten: (bool) Whether to flatten final array.
         Returns:
             (n_eval, n_obs) Evaluated empirical cdf.
         """
-        return _make_empirical_cdf(y_eval, y, flatten=flatten)
+        return _make_empirical_cdf(y_eval=self.quant_val,
+                                   y_obs=self.y,
+                                   X_obs=self.X,
+                                   X_induce=self.X_induce,
+                                   flatten=flatten,
+                                   bandwidth=bandwidth)
 
 
-def _make_empirical_cdf(y_eval, y, flatten=True):
+def _join_cdf_and_feature(cdf_array, feature_array, flatten=True):
+    """Produces CDF features [F(y|feature_array), feature_array].
+
+    Outputs an array [F(y|x), x] of shape (n_eval * n_obs, 1 + n_dim).
+
+    Args:
+        cdf_array: (np.ndarray) CDF values of shape (n_eval, ).
+        feature_array: (np.ndarray) Features of shape (n_obs, n_dim).
+        flatten: (bool) Whether to flatten output.
+
+    Returns:
+        cdf_feature (np.ndarray) CDF feature only, shape (n_eval * n_obs, )
+        feature_all (np.ndarray) CDF and original input features of shape (n_eval * n_obs, 1 + n_dim).
+    """
+
+    n_eval, = cdf_array.shape
+    n_obs, n_dim = feature_array.shape
+
+    # repeat
+    cdf_feature = np.tile(np.reshape(cdf_array, [cdf_array.size, 1, 1]),
+                          (1, n_obs, 1))  # shape (n_eval, n_obs, 1)
+    X_feature = np.tile(np.expand_dims(feature_array, 0),
+                        (n_eval, 1, 1))  # shape (n_eval, n_obs, n_dim)
+
+    # assemble features to wide format, shape (n_eval, n_obs, 1 + n_dim)
+    feature_all = np.concatenate([cdf_feature, X_feature], axis=-1)
+
+    # convert features to long format, shape (n_eval * n_obs, 1 + n_dim)
+    if flatten:
+        feature_all = feature_all.reshape(n_eval * n_obs, 1 + n_dim)
+
+    feature_cdf = feature_all[..., 0]
+
+    return feature_cdf, feature_all
+
+
+def _make_empirical_cdf(y_eval, y_obs, X_obs,
+                        X_induce=None,
+                        flatten=True, bandwidth=0.1):
     """Makes empirical cdf I(y < perc_eval).
 
     Args:
         y_eval: (np.ndarray of float32) y locations where CDF
-            are evaluated, shape (n_eval, n_obs).
-        y: (np.ndarray of float32) Training labels, shape (n_obs, ).
+            are evaluated, shape (n_eval, n_obs_induce).
+        y_obs: (np.ndarray of float32) Training labels, shape (n_obs, ).
+        X_obs: (np.ndarray of float32) Training features, shape (n_obs, n_dim).
+        X_induce: (np.ndarray of float32) Inducing features, shape (n_obs_induce, n_dim).
 
     Returns:
         (np.ndarray) Evaluated empirical cdf,
-            shape (n_eval, n_obs) if flatten = False,
-            or (n_eval * n_obs, ) if flatten = True
+            shape (n_eval, n_obs_induce) if flatten = False,
+            or (n_eval * n_obs_induce, ) if flatten = True
     """
+    # TODO(jereliu): check this
+    if X_induce is None:
+        X_induce = X_obs
+
     # reshape input for broadcasting
-    n_eval, n_obs = y_eval.shape
-    if y.size != n_obs:
-        raise ValueError("Sample size of y_eval ({}) and "
-                         "y ({}) doesn't match!".format(n_obs, y.size))
+    n_eval, n_obs_induce = y_eval.shape
+    n_obs, = y_obs.shape
+    n_obs_X, n_dim = X_obs.shape
+    n_obs_induce_X, n_dim_induce = X_induce.shape
 
-    y_obs = np.tile(np.expand_dims(y, 0), (n_eval, 1))  # shape (n_eval, n_obs)
+    if n_obs_induce != n_obs_induce_X:
+        raise ValueError("Different sample size in y_eval ({}) "
+                         "and X_induce ({})".format(n_obs_induce, n_obs_induce_X))
+    if n_obs != n_obs_X:
+        raise ValueError("Different sample size in y_obs ({}) "
+                         "and X_obs ({})".format(n_obs, n_obs_X))
+    if n_dim != n_dim_induce:
+        raise ValueError("Different dimension in X_obs ({}) "
+                         "and X_induce ({})".format(n_dim, n_dim_induce))
 
-    # compute empirical CDF using broadcasting
-    emp_cdf_array = (y_eval > y_obs)  # shape (n_eval, n_obs)
-    emp_cdf_array = emp_cdf_array.astype(dtype_util.NP_DTYPE)
+    # make comparison matrix, shape (n_eval, n_obs_induce, n_obs)
+    y_obs = y_obs[None, None, :]  # shape (1, 1, n_obs)
+    y_eval = y_eval[:, :, None]  # shape (n_eval, n_obs_induce, 1)
+    comp_array = (y_obs < y_eval).astype(dtype_util.NP_DTYPE)  # shape (n_eval, n_obs_induce, n_obs)
+
+    # make mask, shape (n_eval, n_obs_induce, n_obs)
+    thres_mask = model_util.make_distance_mask(X_induce, X_obs,
+                                               threshold=bandwidth)
+    thres_mask = np.tile(np.expand_dims(thres_mask, 0),
+                         reps=(n_eval, 1, 1))
+
+    comp_array_masked = np.ma.array(comp_array, mask=thres_mask)
+
+    # compute empirical CDF using masked mean
+    emp_cdf_array = comp_array_masked.mean(axis=-1).filled(fill_value=NULL_CDF_VAL)
+
+    if np.any(emp_cdf_array == NULL_CDF_VAL):
+        raise Warning("Null value occurred during creating CDF label.")
 
     if flatten:
         emp_cdf_array = emp_cdf_array.flatten()
