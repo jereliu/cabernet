@@ -31,6 +31,8 @@ class GaussianProcess(model_template.Model):
         # data handling
         self.X = X
         self.y = y
+        self.outcome_obs = self.y
+
         self.ls = np.exp(log_ls)
 
         self.kern_func = kern_func
@@ -59,14 +61,13 @@ class GaussianProcess(model_template.Model):
                 dimension (N,)
 
         """
-        self.X = tf.convert_to_tensor(self.X, dtype=dtype_util.TF_DTYPE)
-        self.ls = tf.convert_to_tensor(self.ls, dtype=dtype_util.TF_DTYPE)
+        X = tf.convert_to_tensor(self.X, dtype=dtype_util.TF_DTYPE)
+        ls = tf.convert_to_tensor(self.ls, dtype=dtype_util.TF_DTYPE)
 
         gp_mean = tf.zeros(self.n_obs, dtype=dtype_util.TF_DTYPE)
 
         # covariance
-        K_mat = self.kern_func(self.X,
-                               ls=self.ls,
+        K_mat = self.kern_func(X, ls=ls,
                                ridge_factor=ridge_factor)
 
         gp = ed.MultivariateNormalTriL(
@@ -82,28 +83,36 @@ class GaussianProcess(model_template.Model):
                                       name="y")
         return y
 
-    def variational_family(self, Z, Zm=None,
+    def variational_family(self, vi_family="dgpr",
                            ridge_factor=1e-3,
-                           name="q_gp", return_vi_param=False):
+                           name="q_gp",
+                           return_vi_param=False,
+                           **vi_family_args):
         """Defines the decoupled GP variational family for GPR.
 
         Args:
-            Z: (np.ndarray of float32) inducing points, shape (Ns, D).
-            Zm: (np.ndarray of float32 or None) inducing points for mean, shape (Nm, D).
-                If None then same as Z
+            vi_family: (str) `dgpr` (Decoupled GP) or `mfvi` (mean-field VI).
             ridge_factor: (float32) small ridge factor to stabilize Cholesky decomposition
             name: (str) name for the variational parameter/random variables.
-            return_param: (bool) If True then also return var parameters.
+            return_vi_param: (bool) If True then also return var parameters.
         """
         param_dict_all = dict()
 
         assert len(self.param_names) == 1, "Found {} > 1 params".format(len(self.param_names))
 
+        if vi_family == "dgpr":
+            vi_family_function = model_util.dgpr_variational_family
+        elif vi_family == "mfvi":
+            vi_family_function = model_util.mfvi_variational_family
+        else:
+            raise ValueError("`vi_family can only be `dgpr` or `mfvi`.")
+
         for name in self.param_names:
-            param_dict_all[name] = model_util.dgpr_variational_family(
-                X=self.X, Z=Z, Zm=Zm, ls=self.ls,
+            param_dict_all[name] = vi_family_function(
+                X=self.X, ls=self.ls,
                 kernel_func=self.kern_func,
                 ridge_factor=ridge_factor,
+                **vi_family_args,
                 name=name)
 
         self.model_param, self.vi_param = model_util.make_param_dict(param_dict_all)
@@ -160,6 +169,8 @@ class GaussianProcess(model_template.Model):
              (np.ndarray of float32) posterior predictive mean samples,
                 shape (n_sample, n_obs_new)
         """
+        ls = tf.convert_to_tensor(self.ls, dtype=dtype_util.TF_DTYPE)
+        X = tf.convert_to_tensor(self.X, dtype=dtype_util.TF_DTYPE)
         X_new = tf.convert_to_tensor(X_new, dtype=dtype_util.TF_DTYPE)
         f_sample = tf.convert_to_tensor(f_sample, dtype=dtype_util.TF_DTYPE)
 
@@ -172,9 +183,9 @@ class GaussianProcess(model_template.Model):
             kernel_func_nn = self.kern_func
 
         # compute basic components
-        Kxx = kernel_func_nn(X_new, X_new, ls=self.ls)
-        Kx = kernel_func_xn(self.X, X_new, ls=self.ls)
-        K = self.kern_func(self.X, ls=self.ls, ridge_factor=ridge_factor)
+        Kxx = kernel_func_nn(X_new, X_new, ls=ls)
+        Kx = kernel_func_xn(X, X_new, ls=ls)
+        K = self.kern_func(X, ls=ls, ridge_factor=ridge_factor)
         K_inv = tf.matrix_inverse(K)
 
         # compute conditional mean and variance.
